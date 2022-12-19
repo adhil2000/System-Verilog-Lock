@@ -1,0 +1,236 @@
+`default_nettype none
+typedef enum logic [1:0] {SETPASS=0, ENTRY=1, VERIFY=2} lock_state_t;
+// Empty top module
+
+module top (
+  // I/O ports
+  input  logic hz100, reset,
+  input  logic [20:0] pb,
+  output logic [7:0] left, right,
+         ss7, ss6, ss5, ss4, ss3, ss2, ss1, ss0,
+  output logic red, green, blue,
+
+  // UART ports
+  output logic [7:0] txdata,
+  input  logic [7:0] rxdata,
+  output logic txclk, rxclk,
+  input  logic txready, rxready
+);
+  
+  // Prelab Step 1
+  logic hz4;
+  clock_hz4 clk4 (.clk(hz100), .rst(reset), .hz4(hz4));
+  // assign green = hz4;
+  
+  // Prelab Step 2
+  logic [4:0] keycode;
+  logic strobe;
+  synckey sk1 (.clk(hz100), .rst(reset), .in(pb[19:0]), .strobe(strobe), .out(keycode));
+
+  // Prelab Step 3
+  logic [7:0] disp_en;
+  display_enabler deh1 (.clk(strobe), .rst(reset), .keycode(keycode), .enable_out(disp_en));
+
+  // Prelab Step 4
+  logic [1:0] state;  
+  lock_controller dcl1 (.clk(strobe), .rst(reset), .enable(keycode == 5'b10000), 
+  .relock ((keycode == 5'b10010) && (alarm == 1'b0)), .state(state));
+
+  // Postlab Variables
+  logic open;
+  logic alarm;
+  logic [31:0] entry;
+  logic [31:0] saved;
+  logic [63:0] ss_status;
+  logic [63:0] ss_decout;
+  logic [31:0] ssdec_in;
+  logic password_entry_mode;
+  
+  // Postlab Step 1
+  storepass sp_1 (.clk(strobe), .rst(reset), .clr(1'b0), 
+  .keycode(keycode), .enable(state == SETPASS), .out(saved));
+  
+  storepass sp_2 (.clk(strobe), .rst(reset), .clr(open && keycode == 5'd18), 
+  .keycode(keycode), .enable(state == ENTRY), .out(entry));
+  
+  //Testing Conditions
+  //assign saved = left;
+  //assign entry = right;
+  assign blue = (state == ENTRY);
+  assign open = state == VERIFY ? saved == entry : 0;
+  assign green = open;
+  assign alarm = state == VERIFY ? saved != entry : 0;
+  assign red = (alarm & hz4);
+
+  //assign {ss7,ss6,ss5,ss4,ss3,ss2,ss1,ss0} = ss_status;
+  assign ssdec_in = state == SETPASS ? saved : entry;
+  assign password_entry_mode = (VERIFY != 2'b1) && ( | disp_en) ? 1 : 0; 
+ 
+  // Postlab Step 2
+  status_display disp_1 (.state(state), .open(open), .alarm(alarm), .ss(ss_status));
+  
+  // Postlab Step 3
+  ssdec inst_1 (.in(ssdec_in[3:0]),   .en(disp_en[0]), .out(ss_decout[7:0]));
+  ssdec inst_2 (.in(ssdec_in[7:4]),   .en(disp_en[1]), .out(ss_decout[15:8]));
+  ssdec inst_3 (.in(ssdec_in[11:8]),  .en(disp_en[2]), .out(ss_decout[23:16]));
+  ssdec inst_4 (.in(ssdec_in[15:12]), .en(disp_en[3]), .out(ss_decout[31:24]));
+  ssdec inst_5 (.in(ssdec_in[19:16]), .en(disp_en[4]), .out(ss_decout[39:32]));
+  ssdec inst_6 (.in(ssdec_in[23:20]), .en(disp_en[5]), .out(ss_decout[47:40]));
+  ssdec inst_7 (.in(ssdec_in[27:24]), .en(disp_en[6]), .out(ss_decout[55:48]));
+  ssdec inst_8 (.in(ssdec_in[31:28]), .en(disp_en[7]), .out(ss_decout[63:56]));
+
+  assign {ss7,ss6,ss5,ss4,ss3,ss2,ss1,ss0} = password_entry_mode == 1 ? ss_decout : ss_status;
+
+endmodule
+
+module storepass ( input logic clk, input logic rst, input logic clr, 
+                   input logic [4:0] keycode, input logic enable, output logic [31:0] out);
+
+logic [31:0] out1;
+always_ff @(posedge clk, posedge rst)
+begin 
+    if (rst == 1'b1)
+        out1 <= 32'b0;
+    else if (clr == 1'b1)
+        out1 <= 32'b0;
+    else if (enable == 1)
+      begin
+      if (keycode[4] == 1'b0)
+        out1 <= (out1 << 4) | {28'b0,keycode[3:0]};
+      if (keycode == 17)
+        out1 <= out1 >> 4; 
+      end
+//    else
+//       out1 <= out1;
+end
+    assign out = out1;
+        
+endmodule
+
+module status_display (
+        input logic [1:0] state, 
+        input logic open, 
+        input logic alarm, 
+        output logic [63:0] ss
+      );
+        
+        // To avoid wasting time figuring out how to display individual letters, 
+        // we'll just give you the bit patterns for each string.
+        localparam STR_SECURE   = 64'h6D79393E50790000;
+        localparam STR_OPEN     = 64'h5C73795400000000;
+        localparam STR_CALL_911 = 64'h3977383800670606;
+
+        assign ss = (state == ENTRY) ? STR_SECURE : ((state == VERIFY) && (open == 1'b1)) ? STR_OPEN : ((state == VERIFY) && (alarm == 1'b1)) ? STR_CALL_911 : 0; 
+        
+endmodule
+      
+module ssdec (
+  input logic [3:0] in, 
+  input logic en, 
+  output logic [7:0] out
+);
+
+  logic w,x,y,z;
+  
+  assign w = in[3];
+  assign x = in[2];
+  assign y = in[1];
+  assign z = in[0];
+
+  logic a,b,c,d,e,f,g;
+  assign out[6:0] = {g,f,e,d,c,b,a}; // connect A-G to ss0
+  assign out[7] = 0;
+  // Your segment decode statements go below.
+  assign a = en & (~w & ~x & ~y & ~z) | (~w & ~x & y & ~z) | (~w & ~x & y & z) | (~w & x & ~y & z) | (~w & x & y & ~z) | (~w & x & y & z) | (w & ~x & ~y & ~z) | (w & ~x & ~y & z) | (w & ~x & y & ~z) | (w & x & ~y & ~z) | (w & x & y & ~z) | (w & x & y & z);
+  assign b = en & (~w & ~x & ~y & ~z) | (~w & ~x & ~y & z) | (~w & ~x & y & ~z) | (~w & ~x & y & z) | (~w & x & ~y & ~z) | (~w & x & y & z) | (w & ~x & ~y & ~z) | (w & ~x & ~y & z) | (w & ~x & y & ~z) | (w & x & ~y & z);
+  assign c = en & (~w & ~x & ~y & ~z) | (~w & ~x & ~y & z) | (~w & ~x & y & z) | (~w & x & ~y & ~z) | (~w & x & ~y & z) | (~w & x & y & ~z) | (~w & x & y & z) | (w & ~x & ~y & ~z) | (w & ~x & ~y & z) | (w & ~x & y & ~z) | (w & ~x & y & z) | (w & x & ~y & z);
+  assign d = en & (~w & ~x & ~y & ~z) | (~w & ~x & y & ~z) | (~w & ~x & y & z) | (~w & x & ~y & z) | (~w & x & y & ~z) | (w & ~x & ~y & ~z) | (w & ~x & y & z) | (w & x & ~y & ~z) | (w & x & ~y & z) | (w & x & y & ~z);
+  assign e = en & (~w & ~x & ~y & ~z) | (~w & ~x & y & ~z) | (~w & x & y & ~z) | (w & ~x & ~y & ~z) | (w & ~x & y & z) | (w & x & ~y & ~z) | (w & x & ~y & z) | (w & x & y & ~z) | (w & x & y & z) | (w & ~x & y & ~z); 
+  assign f = en & (~w & ~x & ~y & ~z) | (~w & x & ~y & ~z) | (~w & x & ~y & z) | (~w & x & y & ~z) | (w & ~x & ~y & ~z) | (w & ~x & ~y & z) | (w & ~x & y & ~z) | (w & x & ~y & ~z) | (w & x & y & ~z) | (w & x & y & z) | (w & ~x & y & z);
+  assign g = en & (~w & ~x & y & ~z) | (~w & ~x & y & z) | (~w & x & ~y & ~z) | (~w & x & ~y & z) | (~w & x & y & ~z) | (w & ~x & ~y & ~z) | (w & ~x & ~y & z) | (w & ~x & y & ~z) | (w & ~x & y & z) | (w & x & ~y & z) | (w & x & y & ~z) | (w & x & y & z); 
+
+endmodule
+      
+// Step 1
+module clock_hz4(input logic clk, rst, output logic hz4);
+  
+  logic [3:0] count;
+
+  always_ff@(posedge clk, posedge rst)
+      begin
+      if (rst == 1'b1)
+        count <= 4'd0;
+      else if(count==4'd12)      
+        begin            
+          count<=0;        
+          hz4 <= ~hz4;  
+        end
+      else
+        begin
+          count <= count + 1; 
+        end              
+     end    
+endmodule
+
+//Step 2
+module synckey (
+input logic clk, rst, input logic [19:0] in, 
+output logic strobe, output logic [4:0] out);
+
+  // Two-Flip-Flop Synchronizer
+  logic keyclk;
+  assign keyclk = | in;
+  logic [1:0] delay;
+  always_ff @ (posedge clk, posedge rst) begin
+    if(rst == 1'b1)
+      delay <= 0;
+    else
+    delay <= (delay << 1) | {1'b0,keyclk};
+  end
+  assign out[0] = (in[1] | in[3] | in[5] | in[7] | in[9] | in[11] | in[13] | in[15] | in[17] | in[19]); 
+  assign out[1] = (in[2] | in[3] | in[6] | in[7] | in[10] | in[11] | in[14] | in[15] | in[18] | in[19]);
+  assign out[2] = (in[4] | in[5] | in[6] | in[7] | in[12] | in[13] | in[14] | in[15] );
+  assign out[3] = (in[8] | in[9] | in[10] | in[11] | in[12] | in[13] | in[14] | in[15]);
+  assign out[4] = (in[16] | in[17] | in[18] | in[19]);
+  assign strobe = delay[1];
+    
+endmodule
+
+// Step 3
+module display_enabler(input logic clk, rst, input logic [4:0] keycode, output logic [7:0] enable_out);
+
+always_ff @(posedge clk, posedge rst)
+begin 
+    if (rst == 1'b1)
+        enable_out <= 8'b0;  
+    else if ((keycode == 5'b10000) || (keycode == 5'b10010))
+        enable_out <= 8'b0;
+    else if (keycode == 5'b10001)
+        enable_out <= enable_out >> 8'b1; 
+    else if (keycode[4] == 0)
+        enable_out <= (enable_out << 8'b1) | 8'b1;
+end
+endmodule
+
+// Step 4
+module lock_controller (input logic clk, rst, enable, relock, output logic [1:0] state);
+
+lock_state_t lock_state;
+assign state = lock_state;
+
+always_ff @(posedge clk, posedge rst)
+begin
+  if (rst == 1'b1) begin
+        lock_state <= SETPASS; 
+        end
+  else if ((relock == 1) && (lock_state == VERIFY))
+        lock_state <= ENTRY;
+  else if (enable == 1) 
+      begin
+         if(lock_state == ENTRY)
+           lock_state <= VERIFY;
+         if(lock_state == SETPASS)
+           lock_state <= ENTRY;
+      end
+end
+endmodule
